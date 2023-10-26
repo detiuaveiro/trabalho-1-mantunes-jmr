@@ -147,12 +147,18 @@ void ImageInit(void) { ///
   InstrCalibrate();
   InstrName[0] = "pixmem";  // InstrCount[0] will count pixel array acesses
   // Name other counters here...
+  //HIDE
+  InstrName[1] = "pixops";  // InstrCount[1] will count pixel adds/subs/compares
+  //SHOW
   
 }
 
 // Macros to simplify accessing instrumentation counters:
 #define PIXMEM InstrCount[0]
 // Add more macros here...
+//HIDE
+#define PIXOPS InstrCount[1]
+//SHOW
 
 // TIP: Search for PIXMEM or InstrCount to see where it is incremented!
 
@@ -172,6 +178,24 @@ Image ImageCreate(int width, int height, uint8 maxval) { ///
   assert (height >= 0);
   assert (0 < maxval && maxval <= PixMax);
   // Insert your code here!
+  //HIDE
+  Image img = NULL;
+  int success =
+  check( (img = (Image)calloc(1, sizeof(*img))) != NULL, "Alloc image failed" ) &&
+  check( (img->pixel = (uint8*)calloc(width*height, sizeof(uint8))) != NULL, "Alloc pixels failed" );
+
+  if (success) {
+    img->width = width;
+    img->height = height;
+    img->maxval = maxval;
+  } else {
+    errsave = errno;
+    free(img);
+    img = NULL;
+    errno = errsave;
+  }
+  return img;
+  //SHOW
 }
 
 /// Destroy the image pointed to by (*imgp).
@@ -182,6 +206,12 @@ Image ImageCreate(int width, int height, uint8 maxval) { ///
 void ImageDestroy(Image* imgp) { ///
   assert (imgp != NULL);
   // Insert your code here!
+  //HIDE
+  Image img = *imgp;
+  if (img != NULL) { free(img->pixel); }
+  free(img);
+  *imgp = NULL;
+  //SHOW
 }
 
 
@@ -294,6 +324,16 @@ int ImageMaxval(Image img) { ///
 void ImageStats(Image img, uint8* min, uint8* max) { ///
   assert (img != NULL);
   // Insert your code here!
+  //HIDE
+  *min = PixMax;  // maxval would mask overflows!
+  *max = 0;
+  uint8 p;
+  for (int k = 0; k < img->width*img->height; k++) {
+    p = img->pixel[k];
+    if (p < *min) *min = p;
+    if (p > *max) *max = p;
+  }
+  //SHOW
 }
 
 /// Check if pixel position (x,y) is inside img.
@@ -306,6 +346,9 @@ int ImageValidPos(Image img, int x, int y) { ///
 int ImageValidRect(Image img, int x, int y, int w, int h) { ///
   assert (img != NULL);
   // Insert your code here!
+  //HIDE
+  return ImageValidPos(img, x, y) && ImageValidPos(img, x+w-1, y+h-1);
+  //SHOW
 }
 
 /// Pixel get & set operations
@@ -321,6 +364,11 @@ int ImageValidRect(Image img, int x, int y, int w, int h) { ///
 static inline int G(Image img, int x, int y) {
   int index;
   // Insert your code here!
+  //HIDE
+  //x = mod(x, img->width);
+  //y = mod(y, img->height);
+  index = x + img->width*y;
+  //SHOW
   assert (0 <= index && index < img->width*img->height);
   return index;
 }
@@ -349,6 +397,58 @@ void ImageSetPixel(Image img, int x, int y, uint8 level) { ///
 /// All of these functions modify the image in-place: no allocation involved.
 /// They never fail.
 
+//HIDE
+// These are internal functions to create and manipulate pixel maps.
+// A pixel map is a uint[256] array that defines a pixel to pixel mapping,
+// that may then be applied to an image.
+
+// Init pixel map with identity function.
+static void PixMapInit(uint8* map) {
+  int p;
+  for (p = 0; p <= PixMax; p++) {
+    map[p] = (uint8)p;
+  }
+}
+
+// Apply negative transform to map
+static void PixMapNegative(uint8* map, uint8 maxval) {
+  int p;
+  for (p = 0; p <= PixMax; p++) {
+    int v = maxval - map[p];
+    map[p] = (uint8)(v >= 0 ? v : 0);  // avoid underflows for pixels > maxval!
+  }
+}
+
+// Apply step function (0 if p<thr else tread)
+static void PixMapThreshold(uint8* map, uint8 thr, uint8 tread) {
+  int p;
+  for (p = 0; p <= PixMax; p++) {
+    map[p] = (uint8)(map[p] < thr ? 0 : tread);
+  }
+}
+
+// Clamp (and round) pixel value to range [0, maxval].
+static uint8 clamp(double p, uint8 maxval) {
+  return (p < 0.0 ? (uint8)0 : (p < maxval+1.0 ? (uint8)(p+0.5) : maxval));
+}
+
+// Apply affine transform
+static void PixMapAffine(uint8* map, double m, double b, uint8 maxval) {
+  int p;
+  for (p = 0; p <= PixMax; p++) {
+    map[p] = clamp(m * map[p] + b, maxval);
+  }
+}
+
+// In-place apply mapping to image pixels.
+static void ImageMap(Image img, uint8* map) {
+  assert (img != NULL);
+  for (int k = 0; k < img->width*img->height; k++) {
+    PIXMEM += 2;
+    img->pixel[k] = map[img->pixel[k]];
+  }
+}
+//SHOW
 
 /// Transform image to negative image.
 /// This transforms dark pixels to light pixels and vice-versa,
@@ -356,6 +456,12 @@ void ImageSetPixel(Image img, int x, int y, uint8 level) { ///
 void ImageNegative(Image img) { ///
   assert (img != NULL);
   // Insert your code here!
+  //HIDE
+  uint8 map[1+PixMax];
+  PixMapInit(map);
+  PixMapNegative(map, img->maxval);
+  ImageMap(img, map);
+  //SHOW
 }
 
 /// Apply threshold to image.
@@ -364,6 +470,12 @@ void ImageNegative(Image img) { ///
 void ImageThreshold(Image img, uint8 thr) { ///
   assert (img != NULL);
   // Insert your code here!
+  //HIDE
+  uint8 map[1+PixMax];
+  PixMapInit(map);
+  PixMapThreshold(map, thr, img->maxval);
+  ImageMap(img, map);
+  //SHOW
 }
 
 /// Brighten image by a factor.
@@ -374,6 +486,12 @@ void ImageBrighten(Image img, double factor) { ///
   assert (img != NULL);
   // ? assert (factor >= 0.0);
   // Insert your code here!
+  //HIDE
+  uint8 map[1+PixMax];
+  PixMapInit(map);
+  PixMapAffine(map, factor, 0.0, img->maxval);
+  ImageMap(img, map);
+  //SHOW
 }
 
 
@@ -401,6 +519,22 @@ void ImageBrighten(Image img, double factor) { ///
 Image ImageRotate(Image img) { ///
   assert (img != NULL);
   // Insert your code here!
+  //HIDE
+  int w = img->height;
+  int h = img->width;
+  Image img2 = ImageCreate(w, h, img->maxval);
+  if (img2 == NULL) return NULL;
+  int i, j;
+  for (i = 0; i < w; i++) {
+    for (j = 0; j < h; j++) {
+      // apply transform:
+      // x = r[0][0]*i + r[0][1]*j + t[0];
+      // y = r[1][0]*i + r[1][1]*j + t[1];
+      ImageSetPixel(img2, i, j, ImageGetPixel(img, h-1-j, i));
+    }
+  }
+  return img2;
+  //SHOW
 }
 
 /// Mirror an image = flip left-right.
@@ -413,6 +547,23 @@ Image ImageRotate(Image img) { ///
 Image ImageMirror(Image img) { ///
   assert (img != NULL);
   // Insert your code here!
+  //HIDE
+  // This could be done in-place too!
+  int w = img->width;
+  int h = img->height;
+  Image img2 = ImageCreate(w, h, img->maxval);
+  if (img2 == NULL) return NULL;
+  int i, j;
+  for (i = 0; i < w; i++) {
+    for (j = 0; j < h; j++) {
+      // apply transform:
+      // x = r[0][0]*i + r[0][1]*j + t[0];
+      // y = r[1][0]*i + r[1][1]*j + t[1];
+      ImageSetPixel(img2, i, j, ImageGetPixel(img, w-1-i, j));
+    }
+  }
+  return img2;
+  //SHOW
 }
 
 /// Crop a rectangular subimage from img.
@@ -431,6 +582,17 @@ Image ImageCrop(Image img, int x, int y, int w, int h) { ///
   assert (img != NULL);
   assert (ImageValidRect(img, x, y, w, h));
   // Insert your code here!
+  //HIDE
+  Image img2 = ImageCreate(w, h, img->maxval);
+  if (img2 == NULL) return NULL;
+  int i, j;
+  for (i = 0; i < w; i++) {
+    for (j = 0; j < h; j++) {
+      ImageSetPixel(img2, i, j, ImageGetPixel(img, x+i, y+j));
+    }
+  }
+  return img2;
+  //SHOW
 }
 
 
@@ -445,6 +607,16 @@ void ImagePaste(Image img1, int x, int y, Image img2) { ///
   assert (img2 != NULL);
   assert (ImageValidRect(img1, x, y, img2->width, img2->height));
   // Insert your code here!
+  //HIDE
+  int w = img2->width;
+  int h = img2->height;
+  int i, j;
+  for (i = 0; i < w; i++) {
+    for (j = 0; j < h; j++) {
+      ImageSetPixel(img1, x+i, y+j, ImageGetPixel(img2, i, j));
+    }
+  }
+  //SHOW
 }
 
 /// Blend an image into a larger image.
@@ -458,6 +630,26 @@ void ImageBlend(Image img1, int x, int y, Image img2, double alpha) { ///
   assert (img2 != NULL);
   assert (ImageValidRect(img1, x, y, img2->width, img2->height));
   // Insert your code here!
+  //HIDE
+  int w = img2->width;
+  int h = img2->height;
+  int i, j;
+  // scale factor to map img2 maxval to img1 maxval
+  double scale = (double)img1->maxval / (double)img2->maxval;
+  double a = alpha * scale;
+  double b = (1 - alpha);
+  for (i = 0; i < w; i++) {
+    for (j = 0; j < h; j++) {
+      uint8 p1 = ImageGetPixel(img1, x+i, y+j);
+      uint8 p2 = ImageGetPixel(img2, i, j);
+      // using 2 LUTs would be faster!
+      // PIXMEM already counted by Get and Set!
+      PIXOPS += 3;  // 2 mults + 1 add
+      uint8 p0 = clamp(b * (double)p1 + a * (double)p2, img1->maxval);
+      ImageSetPixel(img1, x+i, y+j, p0);
+    }
+  }
+  //SHOW
 }
 
 /// Compare an image to a subimage of a larger image.
@@ -468,6 +660,21 @@ int ImageMatchSubImage(Image img1, int x, int y, Image img2) { ///
   assert (img2 != NULL);
   assert (ImageValidPos(img1, x, y));
   // Insert your code here!
+  //HIDE
+  if (!ImageValidPos(img1, x+img2->width-1, y+img2->height-1)) {
+    return 0;
+  }
+  int i, j;
+  for (i = 0; i < img2->width; i++) {
+    for (j = 0; j < img2->height; j++) {
+      PIXOPS += 1;  // 1 comparison
+      if (ImageGetPixel(img1, x+i, y+j) != ImageGetPixel(img2, i, j)) {
+        return 0;
+      }
+    }
+  }
+  return 1;
+  //SHOW
 }
 
 /// Locate a subimage inside another image.
@@ -478,16 +685,138 @@ int ImageLocateSubImage(Image img1, int* px, int* py, Image img2) { ///
   assert (img1 != NULL);
   assert (img2 != NULL);
   // Insert your code here!
+  //HIDE
+  int x, y;
+  for (x = 0; x <= img1->width-img2->width; x++) {
+    for (y = 0; y <= img1->height-img2->height; y++) {
+      if (ImageMatchSubImage(img1, x, y, img2)) {
+        *px = x;
+        *py = y;
+        return 1;
+      }
+    }
+  }
+  return 0;
+  //SHOW
 }
 
 
 /// Filtering
 
+//HIDE
+static inline int max(int a, int b) { return a >= b ? a : b; }
+static inline int min(int a, int b) { return a <= b ? a : b; }
+//SHOW
 /// Blur an image by a applying a (2dx+1)x(2dy+1) mean filter.
 /// Each pixel is substituted by the mean of the pixels in the rectangle
 /// [x-dx, x+dx]x[y-dy, y+dy].
 /// The image is changed in-place.
 void ImageBlur(Image img, int dx, int dy) { ///
   // Insert your code here!
+  //HIDE
+  // Allocate array for cummulative sums
+  int w = img->width;
+  int h = img->height;
+  uint32_t* cumsum = (uint32_t*)calloc(w*h, sizeof(*cumsum));
+  // check(cumsum != NULL, "Out of memory");
+  
+  // Compute cumsums
+  int k = 0;
+  //printf("----\n");
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      assert( k == G(img, x, y) );
+      PIXMEM += 4; PIXOPS += 3;
+      cumsum[k] =
+          (uint32_t)img->pixel[k]
+          + (y > 0 ? cumsum[k-w] : 0u)
+          + (x > 0 ? cumsum[k-1] : 0u)
+          - (x > 0 && y >0 ? cumsum[k-w-1] : 0u);
+      //printf("%7ud\t", cumsum[k]);
+      k++;
+    }
+    //printf("\n");
+  }
+  //printf("----\n");
+
+  // Compute diffs
+  k = 0;
+  for (int y = 0; y < h; y++) {
+    // BUG FIX:
+    //   y1 = -1 is allowed, with cumsum[x,-1] = 0
+    //   x1 = -1 is allowed, with cumsum[-1,y] = 0.
+    // TODO: redefine cumsum to be (w+1)x(h+1) and avoid conditionals.
+    int y1 = max(y-dy-1, -1);
+    int y2 = min(y+dy, h-1);
+    for (int x = 0; x < w; x++) {
+      assert( k == G(img, x, y) );
+      int x1 = max(x-dx-1, -1);
+      int x2 = min(x+dx, w-1);
+      PIXMEM += 4; PIXOPS += 3;
+      uint32_t diff =
+          cumsum[G(img, x2, y2)] 
+          - (x1 >= 0 ? cumsum[G(img, x1, y2)] : 0u)
+          - (y1 >= 0 ? cumsum[G(img, x2, y1)] : 0u)
+          + (x1 >= 0 && y1 >= 0 ? cumsum[G(img, x1, y1)] : 0u);
+      uint32_t area = (x2-x1)*(y2-y1);
+      PIXMEM += 1; PIXOPS += 3;
+      img->pixel[k] = (uint8)((2*diff + area) / (2*area));  // round
+      //printf("pixel(%d,%d) = %u / %u ~ %hhu\n", x, y, diff, area, img->pixel[k]);
+      k++;
+    }
+  }
+
+  free(cumsum);
+  //SHOW
 }
 
+//HIDE
+/* GARBAGE
+
+// The 4 rotation matrices:
+static int R[4][2][2] = {
+  { { 1,  0}, { 0,  1} },
+  { { 0, -1}, { 1,  0} },
+  { {-1,  0}, { 0, -1} },
+  { { 0,  1}, {-1,  0} },
+};
+
+// Compute x mod w (positive remainder). Assumes w>0;
+static int mod(int x, int w) {
+  return x % w + ((x<0) ? w : 0);
+}
+
+/// Scroll an image.
+/// Displace the origin of an image to (x,y).
+/// 
+/// On success, a new image is returned.
+/// (The caller is responsible for destroying the returned image!)
+/// On failure, returns NULL and errno/errCause are set accordingly.
+Image ImageScroll(Image img, int x, int y) { ///
+  assert (img != NULL);
+  assert (ImageValidPos(img, x, y));
+  // Insert your code here!
+  // #HIDE
+  int w = img->width;
+  int h = img->height;
+  Image img2 = ImageCreate(w, h, img->maxval);
+  if (img2 == NULL) return NULL;
+  for (int i = 0; i < w; i++) {
+    int i0 = mod(x+i, w);
+    for (int j = 0; j < h; j++) {
+      ImageSetPixel(img2, i, j, ImageGetPixel(img, i0, mod(y+j, h)));
+    }
+  }
+  return img2;
+  // #SHOW
+}
+
+Image ImageClone(Image img);
+
+FlipUD();
+
+Compose(a, b, x,y)
+
+StitchLR()
+*/
+//SHOW
